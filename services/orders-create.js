@@ -19,6 +19,7 @@ const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 console.log('🔒 SHOPIFY_WEBHOOK_SECRET:', SHOPIFY_WEBHOOK_SECRET ? 'loaded ✅' : '❌ MISSING');
 console.log('🔗 DATABASE_URL:', process.env.DATABASE_URL ? 'loaded ✅' : '❌ MISSING');
 
+console.log('🔒 Using Shopify webhook secret:', SHOPIFY_WEBHOOK_SECRET);
 
 // Middleware to capture raw body for HMAC verification
 router.use((req, res, next) => {
