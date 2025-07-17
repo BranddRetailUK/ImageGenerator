@@ -8,7 +8,6 @@ import fetch from 'node-fetch';
 import { generateMiniMaxMockup } from './minimax.js';
 import pkg from 'pg';
 import ordersCreateWebhook from '../services/orders-create.js';
-
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -16,36 +15,20 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 🚀 Boot logging
-console.log("🚀 Server starting...");
-console.log("[BOOT] __dirname:", __dirname);
-
-try {
-  console.log("[BOOT] Listing /app directory:", fs.readdirSync('/app'));
-} catch (err) {
-  console.error('❌ Failed to list /app:', err.message);
-}
-
-try {
-  console.log("[BOOT] Listing /app/server directory:", fs.readdirSync('/app/server'));
-} catch (err) {
-  console.error('❌ Failed to list /app/server:', err.message);
-}
-
-try {
-  console.log("[BOOT] Listing /app/services directory:", fs.readdirSync('/app/services'));
-} catch (err) {
-  console.error('❌ Failed to list /app/services:', err.message);
-}
-
 dotenv.config();
 
 const { Pool } = pkg;
 const app = express();
 const port = process.env.PORT || 5050;
 
-app.use(cors());
-app.use(express.json());
+if (!process.env.SHOPIFY_WEBHOOK_SECRET) {
+  console.error('❌ SHOPIFY_WEBHOOK_SECRET is not set!');
+  process.exit(1);
+}
+if (!process.env.DATABASE_URL) {
+  console.error('❌ DATABASE_URL is not set!');
+  process.exit(1);
+}
 
 // ✅ PostgreSQL Pool (Railway DB)
 const pool = new Pool({
@@ -53,7 +36,16 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// Multer for legacy file uploads
+app.use(cors());
+app.use(express.json());
+
+// ✅ Mount webhook route
+app.use('/webhooks/orders-create', ordersCreateWebhook);
+
+// Health check
+app.get('/ping', (req, res) => res.send('pong'));
+
+// Legacy file upload support
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadPath = 'server/uploads';
@@ -67,27 +59,11 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// ✅ Mount webhook route
-app.use('/webhooks/orders-create', ordersCreateWebhook);
-
-// Health check
-app.get('/ping', (req, res) => res.send('pong'));
-
-// Debug route to confirm Railway runtime
-app.get('/test', (req, res) => {
-  console.log('✅ /test route hit');
-  res.send('Test route OK');
-});
-
-// Legacy upload route (image + prompt)
 app.post('/upload', upload.single('artwork'), async (req, res) => {
   const { garments, models, prompt } = req.body;
   const file = req.file;
 
   if (!file) return res.status(400).json({ error: 'No file uploaded.' });
-
-  console.log('📥 Upload received:', { garments, models, prompt });
-  console.log('📁 File path:', file.path);
 
   try {
     const mockupUrl = await generateMiniMaxMockup(prompt, file.path);
@@ -103,15 +79,12 @@ app.post('/upload', upload.single('artwork'), async (req, res) => {
   }
 });
 
-// Artwork generation (prompt only)
 app.post('/generate-artwork', async (req, res) => {
   const { prompt } = req.body;
 
   if (!prompt || prompt.trim().length < 5) {
     return res.status(400).json({ error: 'Prompt is required.' });
   }
-
-  console.log('🎨 Artwork Prompt:', prompt);
 
   try {
     const mockupUrl = await generateMiniMaxMockup(prompt); // No image
@@ -127,7 +100,6 @@ app.post('/generate-artwork', async (req, res) => {
   }
 });
 
-// Download generated image
 app.get('/download/:id', async (req, res) => {
   const id = req.params.id;
 
