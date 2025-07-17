@@ -73,6 +73,12 @@ app.use('/webhooks/orders-create', ordersCreateWebhook);
 // Health check
 app.get('/ping', (req, res) => res.send('pong'));
 
+// Debug route to confirm Railway runtime
+app.get('/test', (req, res) => {
+  console.log('✅ /test route hit');
+  res.send('Test route OK');
+});
+
 // Legacy upload route (image + prompt)
 app.post('/upload', upload.single('artwork'), async (req, res) => {
   const { garments, models, prompt } = req.body;
