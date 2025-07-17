@@ -7,13 +7,13 @@ const { Pool } = pkg;
 
 const router = express.Router();
 
-// ✅ Initialize DB pool
+// Initialize DB pool
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
 
-// ✅ Load and verify critical env vars
+// Load and verify env vars
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 console.log('🔒 SHOPIFY_WEBHOOK_SECRET:', SHOPIFY_WEBHOOK_SECRET ? 'loaded ✅' : '❌ MISSING');
 console.log('🔗 DATABASE_URL:', process.env.DATABASE_URL ? 'loaded ✅' : '❌ MISSING');
@@ -32,9 +32,9 @@ function verifyHmac(rawBodyBuffer, hmacHeader) {
 }
 
 router.post(
-  '/', 
+  '/',
   // Parse raw JSON body into Buffer
-  express.raw({ type: 'application/json' }), 
+  express.raw({ type: 'application/json' }),
   async (req, res) => {
     const start = Date.now();
     console.log(`[${new Date().toISOString()}] 📬 Webhook hit /orders-create`);
@@ -48,7 +48,7 @@ router.post(
     }
 
     // Toggle to skip DB writes for latency testing
-    const skipDbWrite = true;
+    const skipDbWrite = true;  // ← set to false when ready to process DB writes
     if (skipDbWrite) {
       console.log(`[+${Date.now() - start}ms] ⏩ Skipping DB write (test mode)`);
       return res.status(200).send('ok');
@@ -88,7 +88,7 @@ router.post(
       console.log(`[+${Date.now() - start}ms] ✅ DB updated for ${customer.email} → ${plan}`);
       return res.status(200).send('ok');
     } catch (err) {
-      console.error(`[+${Date.now() - start}ms] 🔥 Error processing webhook:`, err);
+      console.error(`[+${Date.now() - start}ms] 🔥 DB Error:`, err.stack || err);
       return res.status(500).send('Webhook processing failed');
     }
   }
