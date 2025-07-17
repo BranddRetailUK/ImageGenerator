@@ -21,6 +21,7 @@ const { Pool } = pkg;
 const app = express();
 const port = process.env.PORT || 5050;
 
+// Validate required env vars early
 if (!process.env.SHOPIFY_WEBHOOK_SECRET) {
   console.error('❌ SHOPIFY_WEBHOOK_SECRET is not set!');
   process.exit(1);
@@ -30,17 +31,20 @@ if (!process.env.DATABASE_URL) {
   process.exit(1);
 }
 
-// ✅ PostgreSQL Pool (Railway DB)
+// PostgreSQL Pool (Railway DB)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
+// CORS
 app.use(cors());
-app.use(express.json());
 
-// ✅ Mount webhook route
+// Mount the raw-body webhook BEFORE any JSON/body parsers
 app.use('/webhooks/orders-create', ordersCreateWebhook);
+
+// Global body parser for all other routes
+app.use(express.json());
 
 // Health check
 app.get('/ping', (req, res) => res.send('pong'));
@@ -121,7 +125,7 @@ app.get('/download/:id', async (req, res) => {
   }
 });
 
-// ✅ Start Express server
+// Start Express server
 app.listen(port, () => {
   console.log(`🚀 Server running on http://localhost:${port}`);
 });
