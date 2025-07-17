@@ -1,4 +1,4 @@
-// index.js
+// server/index.js
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
@@ -12,27 +12,28 @@ import ordersCreateWebhook from '../services/orders-create.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-// ✅ Runtime debug for Railway path issues
+// Set up __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-console.log('[BOOT] __filename:', __filename);
-console.log('[BOOT] __dirname:', __dirname);
+// 🚀 Boot logging
+console.log("🚀 Server starting...");
+console.log("[BOOT] __dirname:", __dirname);
 
 try {
-  console.log('[BOOT] Listing /app directory:', fs.readdirSync('/app'));
+  console.log("[BOOT] Listing /app directory:", fs.readdirSync('/app'));
 } catch (err) {
   console.error('❌ Failed to list /app:', err.message);
 }
 
 try {
-  console.log('[BOOT] Listing /app/server directory:', fs.readdirSync('/app/server'));
+  console.log("[BOOT] Listing /app/server directory:", fs.readdirSync('/app/server'));
 } catch (err) {
   console.error('❌ Failed to list /app/server:', err.message);
 }
 
 try {
-  console.log('[BOOT] Listing /app/services directory:', fs.readdirSync('/app/services'));
+  console.log("[BOOT] Listing /app/services directory:", fs.readdirSync('/app/services'));
 } catch (err) {
   console.error('❌ Failed to list /app/services:', err.message);
 }
@@ -46,45 +47,41 @@ const port = process.env.PORT || 5050;
 app.use(cors());
 app.use(express.json());
 
-// ✅ PostgreSQL Pool (Railway)
+// ✅ PostgreSQL Pool (Railway DB)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-// Multer config for optional image uploads (legacy)
+// Multer for legacy file uploads
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
+  destination: (req, file, cb) => {
     const uploadPath = 'server/uploads';
     fs.mkdirSync(uploadPath, { recursive: true });
     cb(null, uploadPath);
   },
-  filename: function (req, file, cb) {
+  filename: (req, file, cb) => {
     const uniqueName = `${Date.now()}-${file.originalname}`;
     cb(null, uniqueName);
   }
 });
 const upload = multer({ storage });
 
-// ✅ Mount Shopify webhook route (must come BEFORE body parsing affects rawBody)
+// ✅ Mount webhook route
 app.use('/webhooks/orders-create', ordersCreateWebhook);
 
 // Health check
-app.get('/ping', (req, res) => {
-  res.send('pong');
-});
+app.get('/ping', (req, res) => res.send('pong'));
 
-// Upload + generate with file (legacy mode)
+// Legacy upload route (image + prompt)
 app.post('/upload', upload.single('artwork'), async (req, res) => {
   const { garments, models, prompt } = req.body;
   const file = req.file;
 
-  if (!file) {
-    return res.status(400).json({ error: 'No file uploaded.' });
-  }
+  if (!file) return res.status(400).json({ error: 'No file uploaded.' });
 
-  console.log('Received:', { garments, models, prompt });
-  console.log('Saved file to:', file.path);
+  console.log('📥 Upload received:', { garments, models, prompt });
+  console.log('📁 File path:', file.path);
 
   try {
     const mockupUrl = await generateMiniMaxMockup(prompt, file.path);
@@ -95,11 +92,12 @@ app.post('/upload', upload.single('artwork'), async (req, res) => {
       mockupUrl
     });
   } catch (err) {
-    console.error('MiniMax error:', err);
+    console.error('❌ MiniMax Error:', err);
     res.status(500).json({ error: 'Mockup generation failed.' });
   }
 });
 
+// Artwork generation (prompt only)
 app.post('/generate-artwork', async (req, res) => {
   const { prompt } = req.body;
 
@@ -107,24 +105,23 @@ app.post('/generate-artwork', async (req, res) => {
     return res.status(400).json({ error: 'Prompt is required.' });
   }
 
-  console.log('[🎨 Artwork Request]', prompt);
+  console.log('🎨 Artwork Prompt:', prompt);
 
   try {
     const mockupUrl = await generateMiniMaxMockup(prompt); // No image
-
     const insertResult = await pool.query(
       'INSERT INTO images (prompt, image_url, created_at) VALUES ($1, $2, NOW()) RETURNING id',
       [prompt, mockupUrl]
     );
 
-    const imageId = insertResult.rows[0].id;
-    res.json({ mockupUrl, imageId });
+    res.json({ mockupUrl, imageId: insertResult.rows[0].id });
   } catch (err) {
-    console.error('[❌ Generation Error]', err);
+    console.error('❌ Generation DB Error:', err);
     res.status(500).json({ error: 'Artwork generation failed.' });
   }
 });
 
+// Download generated image
 app.get('/download/:id', async (req, res) => {
   const id = req.params.id;
 
@@ -141,12 +138,12 @@ app.get('/download/:id', async (req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename="artwork.png"');
     res.send(Buffer.from(buffer));
   } catch (err) {
-    console.error('Download error:', err);
+    console.error('❌ Download Error:', err);
     res.status(500).send('Download failed');
   }
 });
 
-// Start server
+// ✅ Start Express server
 app.listen(port, () => {
   console.log(`🚀 Server running on http://localhost:${port}`);
 });
