@@ -1,7 +1,5 @@
 // routes/webhooks/orders-create.js
 
-
-
 import express from 'express';
 import crypto from 'crypto';
 import pkg from 'pg';
@@ -18,8 +16,6 @@ const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 
 console.log('🔒 SHOPIFY_WEBHOOK_SECRET:', SHOPIFY_WEBHOOK_SECRET ? 'loaded ✅' : '❌ MISSING');
 console.log('🔗 DATABASE_URL:', process.env.DATABASE_URL ? 'loaded ✅' : '❌ MISSING');
-
-console.log('🔒 Using Shopify webhook secret:', SHOPIFY_WEBHOOK_SECRET);
 
 // Middleware to capture raw body for HMAC verification
 router.use((req, res, next) => {
@@ -56,6 +52,14 @@ router.post('/', express.json(), async (req, res) => {
   if (!verifyHmac(req)) {
     console.warn(`[${new Date().toISOString()}] ❌ Invalid HMAC`);
     return res.status(401).send('Invalid HMAC');
+  }
+
+  // Toggle this flag to skip DB writes during testing
+  const skipDbWrite = true; // set to false when ready to process DB writes
+
+  if (skipDbWrite) {
+    console.log(`[+${Date.now() - start}ms] ⏩ Skipping DB write (testing mode)`);
+    return res.status(200).send('ok');
   }
 
   try {
