@@ -65,7 +65,7 @@ router.post('/', async (req, res) => {
   }
 
   // Toggle this to skip DB writes for latency testing
-  const skipDbWrite = true;
+  const skipDbWrite = false;
   if (skipDbWrite) {
     console.log(`[+${Date.now() - start}ms] ⏩ Skipping DB write (test mode)`);
     return res.status(200).send('ok');
