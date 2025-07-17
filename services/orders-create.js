@@ -1,5 +1,7 @@
 // routes/webhooks/orders-create.js
 
+
+
 import express from 'express';
 import crypto from 'crypto';
 import pkg from 'pg';
@@ -13,6 +15,10 @@ const pool = new Pool({
 });
 
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
+
+console.log('🔒 SHOPIFY_WEBHOOK_SECRET:', SHOPIFY_WEBHOOK_SECRET ? 'loaded ✅' : '❌ MISSING');
+console.log('🔗 DATABASE_URL:', process.env.DATABASE_URL ? 'loaded ✅' : '❌ MISSING');
+
 
 // Middleware to capture raw body for HMAC verification
 router.use((req, res, next) => {
