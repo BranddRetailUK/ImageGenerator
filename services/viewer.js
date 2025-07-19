@@ -86,11 +86,17 @@ router.get('/viewer', async (req, res) => {
             }
 
             .entry-image {
-              max-width: 100%;
-              width: 100%;
+              width: 200px;
+              height: auto;
               border-radius: 6px;
-              box-shadow: 0 2px 10px rgba(0,0,0,0.4);
               margin-bottom: 0.8rem;
+              cursor: pointer;
+              box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+              transition: transform 0.2s ease;
+            }
+
+            .entry-image:hover {
+              transform: scale(1.02);
             }
 
             .delete-btn {
@@ -106,6 +112,36 @@ router.get('/viewer', async (req, res) => {
             .delete-btn:hover {
               background: #bb3e3e;
             }
+
+            /* Modal */
+            .modal {
+              display: none;
+              position: fixed;
+              z-index: 1000;
+              left: 0;
+              top: 0;
+              width: 100vw;
+              height: 100vh;
+              background-color: rgba(0, 0, 0, 0.8);
+              justify-content: center;
+              align-items: center;
+            }
+
+            .modal-content {
+              max-width: 90%;
+              max-height: 90%;
+              border-radius: 10px;
+              box-shadow: 0 0 20px rgba(0,0,0,0.6);
+            }
+
+            .modal-close {
+              position: absolute;
+              top: 20px;
+              right: 30px;
+              font-size: 2rem;
+              color: #fff;
+              cursor: pointer;
+            }
           </style>
         </head>
         <body>
@@ -117,10 +153,16 @@ router.get('/viewer', async (req, res) => {
               <div class="card" id="card-${row.id}">
                 <div class="meta">#${row.id} — ${new Date(row.created_at).toLocaleString()}</div>
                 <div class="prompt">${row.prompt}</div>
-                <img class="entry-image" src="${row.image_url}" alt="Generated Image" />
+                <img class="entry-image" src="${row.image_url}" alt="Generated Image" onclick="openModal('${row.image_url}')"/>
                 <button class="delete-btn" onclick="deleteImage(${row.id})">Delete</button>
               </div>
             `).join('')}
+          </div>
+
+          <!-- Modal -->
+          <div id="imageModal" class="modal" onclick="closeModal()">
+            <span class="modal-close" onclick="closeModal()">&times;</span>
+            <img id="modalImage" class="modal-content" src="" />
           </div>
 
           <script>
@@ -134,6 +176,19 @@ router.get('/viewer', async (req, res) => {
               });
 
               toggleBtn.textContent = currentlyVisible ? 'Show Images' : 'Hide Images';
+            }
+
+            function openModal(imageUrl) {
+              const modal = document.getElementById('imageModal');
+              const modalImg = document.getElementById('modalImage');
+              modalImg.src = imageUrl;
+              modal.style.display = 'flex';
+            }
+
+            function closeModal() {
+              const modal = document.getElementById('imageModal');
+              modal.style.display = 'none';
+              document.getElementById('modalImage').src = '';
             }
 
             async function deleteImage(id) {
