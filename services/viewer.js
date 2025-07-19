@@ -66,17 +66,45 @@ router.get('/viewer', async (req, res) => {
               border-radius: 6px;
               box-shadow: 0 2px 10px rgba(0,0,0,0.4);
             }
+            .delete-btn {
+              margin-top: 1rem;
+              background: #902020;
+              color: white;
+              border: none;
+              padding: 0.4rem 0.9rem;
+              border-radius: 5px;
+              cursor: pointer;
+              transition: background 0.2s ease;
+            }
+            .delete-btn:hover {
+              background: #bb3e3e;
+            }
           </style>
         </head>
         <body>
           <h1>Generated Image Viewer</h1>
           ${rows.map(row => `
-            <div class="card">
+            <div class="card" id="card-${row.id}">
               <div class="meta">#${row.id} — ${new Date(row.created_at).toLocaleString()}</div>
               <div class="prompt">${row.prompt}</div>
               <img src="${row.image_url}" alt="Generated Image" />
+              <button class="delete-btn" onclick="deleteImage(${row.id})">Delete</button>
             </div>
           `).join('')}
+
+          <script>
+            async function deleteImage(id) {
+              if (!confirm('Are you sure you want to delete image #' + id + '?')) return;
+
+              const res = await fetch('/admin/delete/' + id, { method: 'DELETE' });
+
+              if (res.ok) {
+                document.getElementById('card-' + id).remove();
+              } else {
+                alert('Failed to delete image.');
+              }
+            }
+          </script>
         </body>
       </html>
     `;
@@ -85,6 +113,17 @@ router.get('/viewer', async (req, res) => {
   } catch (err) {
     console.error('❌ Error rendering viewer:', err);
     res.status(500).send('Internal Server Error');
+  }
+});
+
+router.delete('/delete/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query('DELETE FROM images WHERE id = $1', [id]);
+    res.status(200).send('Deleted');
+  } catch (err) {
+    console.error('❌ Delete Error:', err);
+    res.status(500).send('Failed to delete image');
   }
 });
 
