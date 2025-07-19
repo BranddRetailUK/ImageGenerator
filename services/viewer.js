@@ -55,7 +55,7 @@ router.get('/viewer', async (req, res) => {
             <div class="card">
               <div class="meta">#${row.id} — ${new Date(row.created_at).toLocaleString()}</div>
               <div class="prompt">${row.prompt}</div>
-              <img src="${row.image_url}" alt="Generated Image" />
+              <img src="${row.image_url}" alt="Generated Image" style="width: 50%;" />
             </div>
           `).join('')}
         </body>
