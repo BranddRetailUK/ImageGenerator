@@ -10,6 +10,7 @@ import pkg from 'pg';
 import ordersCreateWebhook from '../services/orders-create.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import viewerRouter from './services/viewer.js';
 
 // Set up __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -46,8 +47,14 @@ app.use('/webhooks/orders-create', ordersCreateWebhook);
 // Global body parser for all other routes
 app.use(express.json());
 
+//admin viewer
+app.use('/admin', viewerRouter);
+
+
 // Health check
 app.get('/ping', (req, res) => res.send('pong'));
+
+
 
 // Legacy file upload support
 const storage = multer.diskStorage({
