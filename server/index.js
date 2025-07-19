@@ -10,7 +10,7 @@ import pkg from 'pg';
 import ordersCreateWebhook from '../services/orders-create.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import viewerRouter from './services/viewer.js';
+import viewerRouter from '../services/viewer.js';
 
 // Set up __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
