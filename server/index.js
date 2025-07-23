@@ -132,6 +132,26 @@ app.get('/download/:id', async (req, res) => {
   }
 });
 
+app.get('/api/recent-images', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT image_url 
+      FROM images 
+      WHERE image_url IS NOT NULL 
+      ORDER BY created_at DESC 
+      LIMIT 50
+    `);
+
+    // Format for frontend consumption
+    const images = result.rows.map(row => ({ url: row.image_url }));
+    res.json(images);
+  } catch (err) {
+    console.error('❌ Failed to fetch recent images:', err);
+    res.status(500).json({ error: 'Could not load recent images.' });
+  }
+});
+
+
 // Start Express server
 app.listen(port, () => {
   console.log(`🚀 Server running on http://localhost:${port}`);
