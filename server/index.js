@@ -100,14 +100,18 @@ app.post('/upload', upload.single('artwork'), async (req, res) => {
 });
 
 app.post('/generate-artwork', async (req, res) => {
-  const { prompt } = req.body;
+  const { prompt, num_images, optimize_prompt, aspect_ratio } = req.body;
 
   if (!prompt || prompt.trim().length < 5) {
     return res.status(400).json({ error: 'Prompt is required.' });
   }
 
   try {
-    const urls = await generateMiniMaxMockup(prompt, null, 4); // Generate 4 variants
+    const urls = await generateMiniMaxMockup(prompt, null, {
+      numImages: num_images || 1,
+      optimize_prompt: optimize_prompt ?? true,
+      aspect_ratio: aspect_ratio || '1:1'
+    });
 
     for (const url of urls) {
       await pool.query(
@@ -122,6 +126,7 @@ app.post('/generate-artwork', async (req, res) => {
     res.status(500).json({ error: 'Artwork generation failed.' });
   }
 });
+
 
 
 app.get('/download/:id', async (req, res) => {

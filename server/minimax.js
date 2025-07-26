@@ -6,17 +6,23 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-export async function generateMiniMaxMockup(prompt, filePath = null, numImages = 1) {
+export async function generateMiniMaxMockup(prompt, filePath = null, options = {}) {
+  const {
+    numImages = 1,
+    optimize_prompt = true,
+    aspect_ratio = '1:1'
+  } = options;
+
   console.log('[MiniMax] Prompt:', prompt);
   if (filePath) console.log('[MiniMax] Using reference image:', filePath);
 
   const form = new FormData();
   form.append('model', 'image-01');
   form.append('prompt', prompt);
-  form.append('aspect_ratio', '1:1');
+  form.append('aspect_ratio', aspect_ratio); // ✅ now dynamic
   form.append('response_format', 'url');
-  form.append('n', String(numImages)); // ✅ use input value
-  form.append('prompt_optimizer', 'true');
+  form.append('n', String(numImages));
+  form.append('prompt_optimizer', String(optimize_prompt)); // ✅ fixed param name
 
   if (filePath) {
     form.append('subject_reference[0]', fs.createReadStream(filePath));
@@ -47,4 +53,5 @@ export async function generateMiniMaxMockup(prompt, filePath = null, numImages =
     throw error;
   }
 }
+
 
