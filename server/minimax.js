@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-export async function generateMiniMaxMockup(prompt, filePath = null) {
+export async function generateMiniMaxMockup(prompt, filePath = null, numImages = 1) {
   console.log('[MiniMax] Prompt:', prompt);
   if (filePath) console.log('[MiniMax] Using reference image:', filePath);
 
@@ -15,7 +15,7 @@ export async function generateMiniMaxMockup(prompt, filePath = null) {
   form.append('prompt', prompt);
   form.append('aspect_ratio', '1:1');
   form.append('response_format', 'url');
-  form.append('n', '1');
+  form.append('n', String(numImages)); // ✅ use input value
   form.append('prompt_optimizer', 'true');
 
   if (filePath) {
@@ -39,11 +39,12 @@ export async function generateMiniMaxMockup(prompt, filePath = null) {
       throw new Error(data?.base_resp?.message || 'Image generation failed');
     }
 
-    const url = data.data.image_urls[0];
-    console.log('[MiniMax] Final image URL:', url);
-    return url;
+    const urls = data.data.image_urls;
+    console.log('[MiniMax] Generated URLs:', urls);
+    return urls;
   } catch (error) {
     console.error('[MiniMax Request Error]', error);
     throw error;
   }
 }
+

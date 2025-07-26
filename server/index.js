@@ -77,12 +77,21 @@ app.post('/upload', upload.single('artwork'), async (req, res) => {
   if (!file) return res.status(400).json({ error: 'No file uploaded.' });
 
   try {
-    const mockupUrl = await generateMiniMaxMockup(prompt, file.path);
+    const urls = await generateMiniMaxMockup(prompt, file.path, 4); // Generate 4 variants
+
+    // Store all image URLs in DB
+    for (const url of urls) {
+      await pool.query(
+        'INSERT INTO images (prompt, image_url, created_at) VALUES ($1, $2, NOW())',
+        [prompt, url]
+      );
+    }
+
     res.json({
       message: 'Upload and generation successful!',
       filename: file.filename,
       filepath: file.path,
-      mockupUrl
+      urls
     });
   } catch (err) {
     console.error('❌ MiniMax Error:', err);
@@ -98,18 +107,22 @@ app.post('/generate-artwork', async (req, res) => {
   }
 
   try {
-    const mockupUrl = await generateMiniMaxMockup(prompt); // No image
-    const insertResult = await pool.query(
-      'INSERT INTO images (prompt, image_url, created_at) VALUES ($1, $2, NOW()) RETURNING id',
-      [prompt, mockupUrl]
-    );
+    const urls = await generateMiniMaxMockup(prompt, null, 4); // Generate 4 variants
 
-    res.json({ mockupUrl, imageId: insertResult.rows[0].id });
+    for (const url of urls) {
+      await pool.query(
+        'INSERT INTO images (prompt, image_url, created_at) VALUES ($1, $2, NOW())',
+        [prompt, url]
+      );
+    }
+
+    res.json({ urls });
   } catch (err) {
     console.error('❌ Generation DB Error:', err);
     res.status(500).json({ error: 'Artwork generation failed.' });
   }
 });
+
 
 app.get('/download/:id', async (req, res) => {
   const id = req.params.id;
