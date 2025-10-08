@@ -119,12 +119,13 @@ export async function ensureFolder(folderPath) {
  * @param {object} opts - { mode, autorename, mute, createSharedLink }
  */
 export async function uploadBuffer(buffer, destPath, opts = {}) {
-  const {
-    mode = 'add',
-    autorename = true,
-    mute = true,
-    createSharedLink = false,
-  } = opts;
+const {
+  mode = 'add',
+  autorename = true,
+  mute = true,
+  makeSharedLink = false,  
+} = opts;
+
 
   const token = await refreshAccessTokenIfNeeded();
   const pathWithRoot = joinRoot(destPath);
@@ -153,7 +154,7 @@ export async function uploadBuffer(buffer, destPath, opts = {}) {
   const meta = await res.json();
 
   let sharedUrl = null;
-  if (createSharedLink) {
+  if (makeSharedLink) {
     sharedUrl = await createSharedLink(meta.path_lower);
   }
 
@@ -229,6 +230,7 @@ export async function getTemporaryLink(pathLower) {
   const json = await res.json();
   return json.link;
 }
+
 
 export async function deleteFile(pathLower) {
   const token = await refreshAccessTokenIfNeeded();

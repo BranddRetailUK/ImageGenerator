@@ -70,7 +70,7 @@ async function mirrorToDropbox(miniMaxUrl, { subfolder } = {}) {
   const dated = dateStamp();
   const filename = uniqueName('img', '.png');
   const dest = `/${dated}${subfolder ? `/${subfolder}` : ''}/${filename}`;
-  const meta = await uploadBuffer(buf, dest, { createSharedLink: true });
+  const meta = await uploadBuffer(buf, dest, { makeSharedLink: true }); // was createSharedLink: true
   let url = meta.sharedUrl;
   // Convert dl=0 to dl=1 for direct download (if you want)
   if (url && url.includes('dl=0')) url = url.replace('dl=0', 'dl=1');
