@@ -65,8 +65,12 @@ async function mirrorToDropboxOrFallback(miniMaxUrl, { subfolder } = {}) {
 // RESPONSE: { ok:true, urls:[...], count:n }  <-- legacy-compatible for your frontend
 app.post('/generate-artwork', async (req, res) => {
   try {
-    const { prompt, aspect_ratio, numImages = 4, subfolder } = req.body || {};
+    const { prompt, aspect_ratio, subfolder } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
+
+    // Accept numImages | quantity | count, clamp to 1..6, default 1
+    const reqCount = Number(req.body?.numImages ?? req.body?.quantity ?? req.body?.count ?? 1);
+    const numImages = Number.isFinite(reqCount) ? Math.max(1, Math.min(6, reqCount)) : 1;
 
     const srcUrls = await generateMiniMaxMockup(prompt, null, { aspect_ratio, numImages });
 
@@ -85,13 +89,18 @@ app.post('/generate-artwork', async (req, res) => {
   }
 });
 
+
 // --- Legacy file + prompt flow ---
 // RESPONSE: { ok:true, urls:[...], count:n }
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
-    const { prompt, aspect_ratio, numImages = 4, subfolder } = req.body || {};
+    const { prompt, aspect_ratio, subfolder } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
     if (!req.file) return res.status(400).json({ error: 'Missing file' });
+
+    // Accept numImages | quantity | count, clamp to 1..6, default 1
+    const reqCount = Number(req.body?.numImages ?? req.body?.quantity ?? req.body?.count ?? 1);
+    const numImages = Number.isFinite(reqCount) ? Math.max(1, Math.min(6, reqCount)) : 1;
 
     const filePath = req.file.path;
     const srcUrls = await generateMiniMaxMockup(prompt, filePath, { aspect_ratio, numImages });
@@ -110,17 +119,6 @@ app.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// --- Recent images (returns simple {url} list) ---
-app.get('/api/recent-images', async (_req, res) => {
-  try {
-    const q = `SELECT image_url AS url FROM images ORDER BY created_at DESC LIMIT 48`;
-    const { rows } = await pool.query(q);
-    res.json({ ok: true, images: rows });
-  } catch (err) {
-    console.error('[recent-images] error:', err);
-    res.status(500).json({ error: 'Failed to load images' });
-  }
-});
 
 // --- Download proxy: redirect to the stored image_url ---
 app.get('/download/:id', async (req, res) => {
