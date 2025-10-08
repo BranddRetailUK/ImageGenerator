@@ -1,176 +1,186 @@
-// server/index.js
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import fs from 'fs';
-import dotenv from 'dotenv';
 import fetch from 'node-fetch';
-import { generateMiniMaxMockup } from './minimax.js';
 import pkg from 'pg';
-import ordersCreateWebhook from '../services/orders-create.js';
+const { Pool } = pkg;
 import path from 'path';
 import { fileURLToPath } from 'url';
-import viewerRouter from '../services/viewer.js';
+import crypto from 'crypto';
+import dotenv from 'dotenv';
 
-// Set up __dirname in ESM
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { generateMiniMaxMockup } from './minimax.js';
+import adminViewer from './services/viewer.js';
 
-dotenv.config();
+import { getBuffer } from './utils/http.js';
+import { dateStamp, uniqueName } from './utils/path.js';
+import {
+  uploadBuffer,
+  getTemporaryLink,
+  createSharedLink,
+} from './services/dropbox.js';
 
-const { Pool } = pkg;
+
+dotenv.config({ path: path.join(process.cwd(), 'server/.env') });
+
 const app = express();
-const port = process.env.PORT || 5050;
-
-// Validate required env vars early
-if (!process.env.SHOPIFY_WEBHOOK_SECRET) {
-  console.error('❌ SHOPIFY_WEBHOOK_SECRET is not set!');
-  process.exit(1);
-}
-if (!process.env.DATABASE_URL) {
-  console.error('❌ DATABASE_URL is not set!');
-  process.exit(1);
-}
-
-// PostgreSQL Pool (Railway DB)
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
-
-// CORS
 app.use(cors());
-
-// Mount the raw-body webhook BEFORE any JSON/body parsers
-app.use('/webhooks/orders-create', ordersCreateWebhook);
-
-// Global body parser for all other routes
 app.use(express.json());
 
-//admin viewer
-app.use('/admin', viewerRouter);
-
-
-// Health check
-app.get('/ping', (req, res) => res.send('pong'));
-
-
-
-// Legacy file upload support
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadPath = 'server/uploads';
-    fs.mkdirSync(uploadPath, { recursive: true });
-    cb(null, uploadPath);
-  },
-  filename: (req, file, cb) => {
-    const uniqueName = `${Date.now()}-${file.originalname}`;
-    cb(null, uniqueName);
-  }
-});
-const upload = multer({ storage });
-
-app.post('/upload', upload.single('artwork'), async (req, res) => {
-  const { garments, models, prompt } = req.body;
-  const file = req.file;
-
-  if (!file) return res.status(400).json({ error: 'No file uploaded.' });
-
-  try {
-    const urls = await generateMiniMaxMockup(prompt, file.path, 4); // Generate 4 variants
-
-    // Store all image URLs in DB
-    for (const url of urls) {
-      await pool.query(
-        'INSERT INTO images (prompt, image_url, created_at) VALUES ($1, $2, NOW())',
-        [prompt, url]
-      );
-    }
-
-    res.json({
-      message: 'Upload and generation successful!',
-      filename: file.filename,
-      filepath: file.path,
-      urls
-    });
-  } catch (err) {
-    console.error('❌ MiniMax Error:', err);
-    res.status(500).json({ error: 'Mockup generation failed.' });
+// Raw body only for Shopify webhooks route (if you mount it).
+app.use((req, res, next) => {
+  if (req.path.startsWith('/webhooks/')) {
+    // keep raw body for HMAC verification
+    let data = Buffer.alloc(0);
+    req.setEncoding('utf8');
+    req.on('data', chunk => { data = Buffer.concat([data, Buffer.from(chunk)]); });
+    req.on('end', () => { req.rawBody = data; next(); });
+  } else {
+    next();
   }
 });
 
+// --- Database ---
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+
+// --- Health ---
+app.get('/ping', (_req, res) => res.json({ ok: true, ts: Date.now() }));
+
+// --- Multer (legacy upload route) ---
+const upload = multer({ dest: path.join(process.cwd(), 'server/uploads') });
+
+// --- Helpers ---
+async function insertImage({ prompt, source_url, dropbox_path, dropbox_url }) {
+  const q = `
+    INSERT INTO images (prompt, image_url, created_at, source_url, dropbox_path, dropbox_url)
+    VALUES ($1, $2, NOW(), $3, $4, $5)
+    RETURNING id, prompt, image_url, source_url, dropbox_path, dropbox_url, created_at
+  `;
+  // Keep image_url as the primary URL we expose (Dropbox link if available; fallback to source_url)
+  const image_url = dropbox_url || source_url;
+  const { rows } = await pool.query(q, [prompt, image_url, source_url, dropbox_path, dropbox_url]);
+  return rows[0];
+}
+
+async function mirrorToDropbox(miniMaxUrl, { subfolder } = {}) {
+  const buf = await getBuffer(miniMaxUrl);
+  const dated = dateStamp();
+  const filename = uniqueName('img', '.png');
+  const dest = `/${dated}${subfolder ? `/${subfolder}` : ''}/${filename}`;
+  const meta = await uploadBuffer(buf, dest, { createSharedLink: true });
+  let url = meta.sharedUrl;
+  // Convert dl=0 to dl=1 for direct download (if you want)
+  if (url && url.includes('dl=0')) url = url.replace('dl=0', 'dl=1');
+  return { dropbox_path: meta.pathLower, dropbox_url: url };
+}
+
+// --- Generate via prompt-only (MiniMax) ---
 app.post('/generate-artwork', async (req, res) => {
-  const { prompt, num_images, optimize_prompt, aspect_ratio } = req.body;
-
-  if (!prompt || prompt.trim().length < 5) {
-    return res.status(400).json({ error: 'Prompt is required.' });
-  }
-
   try {
-    const urls = await generateMiniMaxMockup(prompt, null, {
-      numImages: num_images || 1,
-      optimize_prompt: optimize_prompt ?? true,
-      aspect_ratio: aspect_ratio || '1:1'
-    });
+    const { prompt, aspect_ratio, numImages = 4, subfolder } = req.body || {};
+    if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
 
-    for (const url of urls) {
-      await pool.query(
-        'INSERT INTO images (prompt, image_url, created_at) VALUES ($1, $2, NOW())',
-        [prompt, url]
-      );
+    const urls = await generateMiniMaxMockup(prompt, null, { aspect_ratio, numImages });
+
+    const out = [];
+    for (const srcUrl of urls) {
+      const mirror = await mirrorToDropbox(srcUrl, { subfolder });
+      const row = await insertImage({
+        prompt,
+        source_url: srcUrl,
+        dropbox_path: mirror.dropbox_path,
+        dropbox_url: mirror.dropbox_url,
+      });
+      out.push({ id: row.id, url: row.image_url, dropbox_path: row.dropbox_path });
     }
 
-    res.json({ urls });
+    res.json({ ok: true, count: out.length, images: out });
   } catch (err) {
-    console.error('❌ Generation DB Error:', err);
-    res.status(500).json({ error: 'Artwork generation failed.' });
+    console.error('[generate-artwork] error:', err);
+    res.status(500).json({ error: 'Generation failed' });
   }
 });
 
+// --- Legacy file + prompt flow ---
+app.post('/upload', upload.single('file'), async (req, res) => {
+  try {
+    const { prompt, aspect_ratio, numImages = 4, subfolder } = req.body || {};
+    if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
+    if (!req.file) return res.status(400).json({ error: 'Missing file' });
 
+    const filePath = req.file.path;
+    const urls = await generateMiniMaxMockup(prompt, filePath, { aspect_ratio, numImages });
 
+    const out = [];
+    for (const srcUrl of urls) {
+      const mirror = await mirrorToDropbox(srcUrl, { subfolder });
+      const row = await insertImage({
+        prompt,
+        source_url: srcUrl,
+        dropbox_path: mirror.dropbox_path,
+        dropbox_url: mirror.dropbox_url,
+      });
+      out.push({ id: row.id, url: row.image_url, dropbox_path: row.dropbox_path });
+    }
+
+    res.json({ ok: true, count: out.length, images: out });
+  } catch (err) {
+    console.error('[upload] error:', err);
+    res.status(500).json({ error: 'Upload flow failed' });
+  }
+});
+
+// --- Recent images (unchanged API, now returns Dropbox URLs where present) ---
+app.get('/api/recent-images', async (_req, res) => {
+  try {
+    const q = `SELECT id, image_url AS url, dropbox_path, dropbox_url, prompt, created_at
+               FROM images ORDER BY created_at DESC LIMIT 48`;
+    const { rows } = await pool.query(q);
+    res.json({ ok: true, images: rows });
+  } catch (err) {
+    console.error('[recent-images] error:', err);
+    res.status(500).json({ error: 'Failed to load images' });
+  }
+});
+
+// --- Download proxy: prefers Dropbox (shared or temp), then falls back to source_url ---
 app.get('/download/:id', async (req, res) => {
-  const id = req.params.id;
-
   try {
-    const result = await pool.query('SELECT image_url FROM images WHERE id = $1', [id]);
+    const { rows } = await pool.query(
+      'SELECT image_url, source_url, dropbox_path, dropbox_url FROM images WHERE id = $1',
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
 
-    if (result.rows.length === 0) return res.status(404).send('Image not found');
+    const row = rows[0];
 
-    const imageUrl = result.rows[0].image_url;
-    const response = await fetch(imageUrl);
-    const buffer = await response.arrayBuffer();
-
-    res.setHeader('Content-Type', 'image/jpeg');
-    res.setHeader('Content-Disposition', 'attachment; filename="artwork.png"');
-    res.send(Buffer.from(buffer));
+    // 1) If we have a permanent Dropbox shared link, redirect to it.
+    if (row.dropbox_url) {
+      return res.redirect(row.dropbox_url);
+    }
+    // 2) If we have a Dropbox path, create a temporary link and redirect.
+    if (row.dropbox_path) {
+      const temp = await getTemporaryLink(row.dropbox_path);
+      return res.redirect(temp);
+    }
+    // 3) Fallback: stream from source URL (MiniMax).
+    if (row.source_url) {
+      return res.redirect(row.source_url);
+    }
+    // 4) Last resort: image_url column.
+    return res.redirect(row.image_url);
   } catch (err) {
-    console.error('❌ Download Error:', err);
-    res.status(500).send('Download failed');
+    console.error('[download] error:', err);
+    res.status(500).json({ error: 'Download failed' });
   }
 });
 
-app.get('/api/recent-images', async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT image_url 
-      FROM images 
-      WHERE image_url IS NOT NULL 
-      ORDER BY created_at DESC 
-      LIMIT 50
-    `);
+// --- Admin viewer (gallery) ---
+app.use('/admin', adminViewer);
 
-    // Format for frontend consumption
-    const images = result.rows.map(row => ({ url: row.image_url }));
-    res.json(images);
-  } catch (err) {
-    console.error('❌ Failed to fetch recent images:', err);
-    res.status(500).json({ error: 'Could not load recent images.' });
-  }
-});
-
-
-// Start Express server
-app.listen(port, () => {
-  console.log(`🚀 Server running on http://localhost:${port}`);
-});
+// --- Start ---
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`[server] running on http://localhost:${PORT}`));
