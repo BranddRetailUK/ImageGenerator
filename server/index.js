@@ -12,7 +12,7 @@ import adminViewer from './services/viewer.js';
 
 import { getBuffer } from './utils/http.js';
 import { dateStamp, uniqueName } from './utils/path.js';
-import { uploadBuffer } from './services/dropbox.js';
+import { uploadBuffer, getTemporaryLink } from './services/dropbox.js';
 
 dotenv.config({ path: path.join(process.cwd(), 'server/.env') });
 
@@ -55,7 +55,6 @@ async function mirrorToDropboxOrFallback(miniMaxUrl, { subfolder } = {}) {
     // Prefer Dropbox link if we got one; otherwise use the original.
     return meta.sharedUrl || miniMaxUrl;
   } catch (e) {
-    // Silent fallback keeps UX intact.
     console.warn('[mirrorToDropboxOrFallback] using source url:', String(e?.message || e));
     return miniMaxUrl;
   }
@@ -81,14 +80,12 @@ app.post('/generate-artwork', async (req, res) => {
       finalUrls.push(showUrl);
     }
 
-    // Legacy shape so your existing script renders immediately
     res.json({ ok: true, count: finalUrls.length, urls: finalUrls });
   } catch (err) {
     console.error('[generate-artwork] error:', err);
     res.status(500).json({ error: 'Generation failed' });
   }
 });
-
 
 // --- Legacy file + prompt flow ---
 // RESPONSE: { ok:true, urls:[...], count:n }
@@ -119,6 +116,48 @@ app.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
+// --- Recent images: random 16 from latest 50 Dropbox images ---
+app.get('/api/recent-images', async (_req, res) => {
+  try {
+    const q = `
+      SELECT id, image_url, dropbox_url, dropbox_path
+      FROM images
+      ORDER BY created_at DESC
+      LIMIT 50
+    `;
+    const { rows } = await pool.query(q);
+
+    const images = [];
+
+    for (const row of rows) {
+      let url = row.dropbox_url || null;
+
+      // If no permanent link, create a temporary Dropbox link
+      if (!url && row.dropbox_path) {
+        try {
+          url = await getTemporaryLink(row.dropbox_path);
+        } catch (err) {
+          console.warn(`[recent-images] failed temp link for ${row.id}:`, err.message);
+          url = row.image_url;
+        }
+      }
+
+      // Fallback to stored image_url if nothing else
+      if (!url) url = row.image_url;
+
+      images.push({ id: row.id, url });
+    }
+
+    // Randomize and select 16
+    const shuffled = images.sort(() => 0.5 - Math.random());
+    const subset = shuffled.slice(0, 16);
+
+    res.json({ ok: true, images: subset });
+  } catch (err) {
+    console.error('[recent-images] error:', err);
+    res.status(500).json({ error: 'Failed to load images' });
+  }
+});
 
 // --- Download proxy: redirect to the stored image_url ---
 app.get('/download/:id', async (req, res) => {
