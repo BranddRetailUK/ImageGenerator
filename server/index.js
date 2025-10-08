@@ -5,8 +5,6 @@ import fetch from 'node-fetch';
 import pkg from 'pg';
 const { Pool } = pkg;
 import path from 'path';
-import { fileURLToPath } from 'url';
-import crypto from 'crypto';
 import dotenv from 'dotenv';
 
 import { generateMiniMaxMockup } from './minimax.js';
@@ -14,31 +12,13 @@ import adminViewer from './services/viewer.js';
 
 import { getBuffer } from './utils/http.js';
 import { dateStamp, uniqueName } from './utils/path.js';
-import {
-  uploadBuffer,
-  getTemporaryLink,
-  createSharedLink,
-} from './services/dropbox.js';
-
+import { uploadBuffer } from './services/dropbox.js';
 
 dotenv.config({ path: path.join(process.cwd(), 'server/.env') });
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-// Raw body only for Shopify webhooks route (if you mount it).
-app.use((req, res, next) => {
-  if (req.path.startsWith('/webhooks/')) {
-    // keep raw body for HMAC verification
-    let data = Buffer.alloc(0);
-    req.setEncoding('utf8');
-    req.on('data', chunk => { data = Buffer.concat([data, Buffer.from(chunk)]); });
-    req.on('end', () => { req.rawBody = data; next(); });
-  } else {
-    next();
-  }
-});
 
 // --- Database ---
 const pool = new Pool({
@@ -52,52 +32,53 @@ app.get('/ping', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 // --- Multer (legacy upload route) ---
 const upload = multer({ dest: path.join(process.cwd(), 'server/uploads') });
 
-// --- Helpers ---
-async function insertImage({ prompt, source_url, dropbox_path, dropbox_url }) {
+// --- Helpers: legacy-compatible DB insert (ONLY prompt, image_url) ---
+async function insertImageLegacy({ prompt, image_url }) {
   const q = `
-    INSERT INTO images (prompt, image_url, created_at, source_url, dropbox_path, dropbox_url)
-    VALUES ($1, $2, NOW(), $3, $4, $5)
-    RETURNING id, prompt, image_url, source_url, dropbox_path, dropbox_url, created_at
+    INSERT INTO images (prompt, image_url, created_at)
+    VALUES ($1, $2, NOW())
+    RETURNING id, prompt, image_url, created_at
   `;
-  // Keep image_url as the primary URL we expose (Dropbox link if available; fallback to source_url)
-  const image_url = dropbox_url || source_url;
-  const { rows } = await pool.query(q, [prompt, image_url, source_url, dropbox_path, dropbox_url]);
+  const { rows } = await pool.query(q, [prompt, image_url]);
   return rows[0];
 }
 
-async function mirrorToDropbox(miniMaxUrl, { subfolder } = {}) {
-  const buf = await getBuffer(miniMaxUrl);
-  const dated = dateStamp();
-  const filename = uniqueName('img', '.png');
-  const dest = `/${dated}${subfolder ? `/${subfolder}` : ''}/${filename}`;
-  const meta = await uploadBuffer(buf, dest, { makeSharedLink: true }); // was createSharedLink: true
-  let url = meta.sharedUrl;
-  // Convert dl=0 to dl=1 for direct download (if you want)
-  if (url && url.includes('dl=0')) url = url.replace('dl=0', 'dl=1');
-  return { dropbox_path: meta.pathLower, dropbox_url: url };
+// Mirror a MiniMax URL to Dropbox, but always return a URL we can show immediately.
+// If Dropbox link creation fails, we quietly fall back to the original MiniMax URL.
+async function mirrorToDropboxOrFallback(miniMaxUrl, { subfolder } = {}) {
+  try {
+    const buf = await getBuffer(miniMaxUrl);
+    const dated = dateStamp();
+    const filename = uniqueName('img', '.png');
+    const dest = `/${dated}${subfolder ? `/${subfolder}` : ''}/${filename}`;
+    const meta = await uploadBuffer(buf, dest, { makeSharedLink: true });
+    // Prefer Dropbox link if we got one; otherwise use the original.
+    return meta.sharedUrl || miniMaxUrl;
+  } catch (e) {
+    // Silent fallback keeps UX intact.
+    console.warn('[mirrorToDropboxOrFallback] using source url:', String(e?.message || e));
+    return miniMaxUrl;
+  }
 }
 
 // --- Generate via prompt-only (MiniMax) ---
+// RESPONSE: { ok:true, urls:[...], count:n }  <-- legacy-compatible for your frontend
 app.post('/generate-artwork', async (req, res) => {
   try {
     const { prompt, aspect_ratio, numImages = 4, subfolder } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
 
-    const urls = await generateMiniMaxMockup(prompt, null, { aspect_ratio, numImages });
+    const srcUrls = await generateMiniMaxMockup(prompt, null, { aspect_ratio, numImages });
 
-    const out = [];
-    for (const srcUrl of urls) {
-      const mirror = await mirrorToDropbox(srcUrl, { subfolder });
-      const row = await insertImage({
-        prompt,
-        source_url: srcUrl,
-        dropbox_path: mirror.dropbox_path,
-        dropbox_url: mirror.dropbox_url,
-      });
-      out.push({ id: row.id, url: row.image_url, dropbox_path: row.dropbox_path });
+    const finalUrls = [];
+    for (const srcUrl of srcUrls) {
+      const showUrl = await mirrorToDropboxOrFallback(srcUrl, { subfolder });
+      await insertImageLegacy({ prompt, image_url: showUrl });
+      finalUrls.push(showUrl);
     }
 
-    res.json({ ok: true, count: out.length, images: out });
+    // Legacy shape so your existing script renders immediately
+    res.json({ ok: true, count: finalUrls.length, urls: finalUrls });
   } catch (err) {
     console.error('[generate-artwork] error:', err);
     res.status(500).json({ error: 'Generation failed' });
@@ -105,6 +86,7 @@ app.post('/generate-artwork', async (req, res) => {
 });
 
 // --- Legacy file + prompt flow ---
+// RESPONSE: { ok:true, urls:[...], count:n }
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
     const { prompt, aspect_ratio, numImages = 4, subfolder } = req.body || {};
@@ -112,32 +94,26 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Missing file' });
 
     const filePath = req.file.path;
-    const urls = await generateMiniMaxMockup(prompt, filePath, { aspect_ratio, numImages });
+    const srcUrls = await generateMiniMaxMockup(prompt, filePath, { aspect_ratio, numImages });
 
-    const out = [];
-    for (const srcUrl of urls) {
-      const mirror = await mirrorToDropbox(srcUrl, { subfolder });
-      const row = await insertImage({
-        prompt,
-        source_url: srcUrl,
-        dropbox_path: mirror.dropbox_path,
-        dropbox_url: mirror.dropbox_url,
-      });
-      out.push({ id: row.id, url: row.image_url, dropbox_path: row.dropbox_path });
+    const finalUrls = [];
+    for (const srcUrl of srcUrls) {
+      const showUrl = await mirrorToDropboxOrFallback(srcUrl, { subfolder });
+      await insertImageLegacy({ prompt, image_url: showUrl });
+      finalUrls.push(showUrl);
     }
 
-    res.json({ ok: true, count: out.length, images: out });
+    res.json({ ok: true, count: finalUrls.length, urls: finalUrls });
   } catch (err) {
     console.error('[upload] error:', err);
     res.status(500).json({ error: 'Upload flow failed' });
   }
 });
 
-// --- Recent images (unchanged API, now returns Dropbox URLs where present) ---
+// --- Recent images (returns simple {url} list) ---
 app.get('/api/recent-images', async (_req, res) => {
   try {
-    const q = `SELECT id, image_url AS url, dropbox_path, dropbox_url, prompt, created_at
-               FROM images ORDER BY created_at DESC LIMIT 48`;
+    const q = `SELECT image_url AS url FROM images ORDER BY created_at DESC LIMIT 48`;
     const { rows } = await pool.query(q);
     res.json({ ok: true, images: rows });
   } catch (err) {
@@ -146,39 +122,22 @@ app.get('/api/recent-images', async (_req, res) => {
   }
 });
 
-// --- Download proxy: prefers Dropbox (shared or temp), then falls back to source_url ---
+// --- Download proxy: redirect to the stored image_url ---
 app.get('/download/:id', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      'SELECT image_url, source_url, dropbox_path, dropbox_url FROM images WHERE id = $1',
+      'SELECT image_url FROM images WHERE id = $1',
       [req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
-
-    const row = rows[0];
-
-    // 1) If we have a permanent Dropbox shared link, redirect to it.
-    if (row.dropbox_url) {
-      return res.redirect(row.dropbox_url);
-    }
-    // 2) If we have a Dropbox path, create a temporary link and redirect.
-    if (row.dropbox_path) {
-      const temp = await getTemporaryLink(row.dropbox_path);
-      return res.redirect(temp);
-    }
-    // 3) Fallback: stream from source URL (MiniMax).
-    if (row.source_url) {
-      return res.redirect(row.source_url);
-    }
-    // 4) Last resort: image_url column.
-    return res.redirect(row.image_url);
+    return res.redirect(rows[0].image_url);
   } catch (err) {
     console.error('[download] error:', err);
     res.status(500).json({ error: 'Download failed' });
   }
 });
 
-// --- Admin viewer (gallery) ---
+// --- Admin viewer (unchanged mount) ---
 app.use('/admin', adminViewer);
 
 // --- Start ---
