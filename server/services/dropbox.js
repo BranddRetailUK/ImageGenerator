@@ -1,12 +1,11 @@
 // ESM module
 import fetch from 'node-fetch';
-import { fileURLToPath } from 'url';
-import path from 'path';
 
 /**
  * Dropbox Service
- * - Uses refresh-token flow when DROPBOX_REFRESH_TOKEN is present.
+ * - Supports refresh-token flow when DROPBOX_REFRESH_TOKEN is present.
  * - Falls back to static access token (DROPBOX_ACCESS_TOKEN) if no refresh token.
+ * - Provides upload, shared-link/temporary-link creation, delete, and helpers.
  */
 
 const {
@@ -16,10 +15,6 @@ const {
   DROPBOX_REFRESH_TOKEN,
   DROPBOX_ROOT = '/GG-Generator',
 } = process.env;
-
-if (!DROPBOX_APP_KEY || !DROPBOX_APP_SECRET) {
-  console.warn('[Dropbox] Missing APP KEY/SECRET — set DROPBOX_APP_KEY and DROPBOX_APP_SECRET');
-}
 
 const TOKEN_ENDPOINT = 'https://api.dropboxapi.com/oauth2/token';
 const CONTENT_API = 'https://content.dropboxapi.com/2';
@@ -35,8 +30,12 @@ function now() {
   return Date.now();
 }
 
+async function safeText(res) {
+  try { return await res.text(); } catch { return ''; }
+}
+
 async function refreshAccessTokenIfNeeded() {
-  // If using static access token, nothing to do.
+  // If using static token only, nothing to refresh.
   if (!tokenState.usingRefresh) {
     if (!tokenState.accessToken) {
       throw new Error('[Dropbox] No access token configured. Set DROPBOX_ACCESS_TOKEN or use a refresh token.');
@@ -44,7 +43,7 @@ async function refreshAccessTokenIfNeeded() {
     return tokenState.accessToken;
   }
 
-  // If we have a valid token, reuse.
+  // If we have a valid token, reuse it.
   if (tokenState.accessToken && tokenState.expiresAt && tokenState.expiresAt - now() > 60_000) {
     return tokenState.accessToken;
   }
@@ -70,20 +69,14 @@ async function refreshAccessTokenIfNeeded() {
   }
 
   const json = await res.json();
-  // returns: access_token, token_type, expires_in (seconds), scope, ...
   tokenState.accessToken = json.access_token;
   tokenState.expiresAt = now() + (json.expires_in ? (json.expires_in * 1000) : 3_540_000);
   return tokenState.accessToken;
 }
 
-async function safeText(res) {
-  try { return await res.text(); } catch { return ''; }
-}
-
 function joinRoot(dropboxPath) {
-  // Ensure leading slash and root prefix
   const clean = dropboxPath.startsWith('/') ? dropboxPath : `/${dropboxPath}`;
-  if (DROPBOX_ROOT === '/' || dropboxPath.startsWith(DROPBOX_ROOT)) return clean;
+  if (DROPBOX_ROOT === '/' || clean.startsWith(DROPBOX_ROOT)) return clean;
   const root = DROPBOX_ROOT.endsWith('/') ? DROPBOX_ROOT.slice(0, -1) : DROPBOX_ROOT;
   return `${root}${clean}`;
 }
@@ -102,7 +95,6 @@ export async function ensureFolder(folderPath) {
   });
 
   if (res.status === 409) {
-    // Already exists
     return { ok: true, alreadyExists: true, path: pathWithRoot };
   }
   if (!res.ok) {
@@ -115,17 +107,16 @@ export async function ensureFolder(folderPath) {
 /**
  * Upload a file buffer to Dropbox.
  * @param {Buffer|Uint8Array} buffer - file data
- * @param {string} destPath - path relative to DROPBOX_ROOT, e.g. "/2025-10-08/img-123.png"
- * @param {object} opts - { mode, autorename, mute, createSharedLink }
+ * @param {string} destPath - path relative to DROPBOX_ROOT, e.g., "/2025-10-08/img-123.png"
+ * @param {object} opts - { mode, autorename, mute, makeSharedLink }
  */
 export async function uploadBuffer(buffer, destPath, opts = {}) {
-const {
-  mode = 'add',
-  autorename = true,
-  mute = true,
-  makeSharedLink = false,  
-} = opts;
-
+  const {
+    mode = 'add',
+    autorename = true,
+    mute = true,
+    makeSharedLink = false, // renamed to avoid shadowing the function createSharedLink
+  } = opts;
 
   const token = await refreshAccessTokenIfNeeded();
   const pathWithRoot = joinRoot(destPath);
@@ -155,7 +146,17 @@ const {
 
   let sharedUrl = null;
   if (makeSharedLink) {
-    sharedUrl = await createSharedLink(meta.path_lower);
+    try {
+      sharedUrl = await createSharedLink(meta.path_lower);
+    } catch (e) {
+      // Fallback when app lacks sharing.write or link creation fails — use temporary link
+      const msg = String(e?.message || '');
+      if (msg.includes("required scope 'sharing.write'") || msg.includes('create_shared_link')) {
+        sharedUrl = await getTemporaryLink(meta.path_lower);
+      } else {
+        throw e;
+      }
+    }
   }
 
   return {
@@ -231,7 +232,6 @@ export async function getTemporaryLink(pathLower) {
   return json.link;
 }
 
-
 export async function deleteFile(pathLower) {
   const token = await refreshAccessTokenIfNeeded();
   const res = await fetch(`${RPC_API}/files/delete_v2`, {
@@ -249,11 +249,7 @@ export async function deleteFile(pathLower) {
   return true;
 }
 
-/**
- * Utility to build a dated path with optional subfolders.
- * Example: buildDatedPath('2025-10-08', 'user@example.com', 'img.png')
- * -> "/GG-Generator/2025-10-08/user_example.com/img.png"
- */
+/** Utility to compose a dated, safe path */
 export function buildDatedPath(dateStr, subfolder, filename) {
   const safeSub = subfolder ? `/${String(subfolder).replace(/[^a-z0-9._-]+/gi, '_')}` : '';
   const safeFile = String(filename).replace(/[^a-z0-9._-]+/gi, '_');

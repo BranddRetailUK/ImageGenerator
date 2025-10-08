@@ -190,17 +190,6 @@
 
   <button id="videoTab" class="tabBtn" style="flex: 1 1 150px; max-width: 250px; position: relative;">
     Video Generator
-    <span style="
-      position: absolute;
-      top: -1.1rem;
-      left: 50%;
-      transform: translateX(-50%);
-      font-size: 1rem;
-      font-weight: 800;
-      color: #facc15;
-      text-shadow: 0 0 3px black;
-      pointer-events: none;
-    ">COMING SOON</span>
   </button>
 </div>
 
@@ -219,14 +208,14 @@
 
   <div style="
     background-color: #1e293b;
-    color:rgb(255, 255, 255);
+    color: #ffffff;
     font-weight: 700;
-    font-size: 1.1rem;
+    font-size: 1.2rem;
     padding: 1.5rem 2rem;
     border-radius: 1rem;
     border: 2px dashed #facc15;
     display: inline-block;
-    box-shadow: 0 0 15px rgba(255, 255, 255, 0.5);
+    box-shadow: 0 0 15px rgba(250, 204, 21, 0.5);
   ">
     🚧 COMING SOON 🚧
   </div>
@@ -240,11 +229,7 @@
 
   <!-- Prompt Input (Full Width) -->
   <div style="width: 100%; margin-top: 1rem;">
-    <textarea
-      id="promptInput"
-      placeholder="e.g. modern gaming logo"
-      style="width: 100%; min-height: 120px; padding: 1rem; border-radius: 10px; border: none; background-color: #1a2238; color: white; font-size: 1rem; resize: none; box-sizing: border-box;"
-    ></textarea>
+    <textarea id="promptInput" placeholder="e.g. modern gaming logo" style="width: 100%; min-height: 120px; padding: 1rem; border-radius: 10px; border: none; background-color: #1a2238; color: white; font-size: 1rem; resize: none; box-sizing: border-box;"></textarea>
   </div>
 
   <!-- Prompt Controls (Slightly Narrower) -->
@@ -556,4 +541,6 @@
 </script>
 
 
+</div>
+</div>
 </body>
